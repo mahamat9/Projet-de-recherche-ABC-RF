@@ -1,0 +1,215 @@
+---
+title: "Exemple d'ABC+MA comme modèle"
+output: pdf_document
+date: "`r Sys.Date()`"
+---
+
+```{r}
+library(ggplot2)
+library(MASS)
+library(gridExtra)
+```
+
+Fonction Moving Average (2)
+
+```{r}
+moving_average_2 <- function(theta1, theta2, n_obs=100) {
+  lambda <- rnorm(n_obs + 2)
+  y <- lambda[3:(n_obs+2)] + theta1*lambda[2:(n_obs+1)] + theta2*lambda[1:n_obs]
+  return(y)
+}
+```
+
+Les vraies thetas
+```{r}
+θ1_true <- 0.6
+θ2_true <- 0.2
+```
+
+Data observées  #a preciser si c'est le modèle
+```{r}
+y_obs <- moving_average_2(θ1_true, θ2_true)
+```
+
+Simulation de theta #c'est les θ'
+pour q = 2: −2 < θ1 < 2, θ1 + θ2 > −1, θ1 − θ2 < 1.
+```{r}
+grid <- function() {
+  while (TRUE) {
+    # Générer points aléatoires suivant loi uniform
+    theta1 <- runif(1, min = -2, max = 2)
+    theta2 <- runif(1, min = -1, max = 1)
+    
+    # vérifier les conditions
+    if (theta1 + theta2 > -1 && theta1 - theta2 < 1 && theta1 > -2 && theta1 < 2) {
+      return(c(theta1, theta2))
+    }
+  }
+}
+```
+
+Nous definissons la distance qui sera utilisé par la suite pour calculer celle entre les statistiques descriptives 
+```{r} 
+#Euclidien
+distance <- function(y, z){
+  return(sqrt(sum((y - z)^2)))}
+```
+
+La métrique de Mahalanobis sert à détecter les outliers ou pour déterminer la cohérence de données simulées par le modèle.
+```{r}
+mahalanobis_distance <- function(y,z) {
+  
+  #calcul de la matrice de cov
+  cov = cov(y,z)
+  
+  carre_diff <- y - z
+  
+  # Calcul de distance Mahalanobis
+  dista <- sqrt(sum(t(carre_diff) %*% carre_diff)/cov)
+  
+  return(dista)
+}
+```
+
+La statisque autocov:
+```{r}
+autocov <- function(x, q = 2) { #q = max_lag
+  
+  n <- length(x)
+  tau <- rep(NA, q )  # vecteur des autocovariances
+  
+  # Calculer les autocovariances pour lags de 0 à q
+  for (lag in 0:q) {
+    if (lag == 0) {
+      # Autocovariance pour lag 0 est la variance
+      tau[lag + 1] <- var(x)
+    } else {
+      # Calculer pour lag = 1 et lag=2
+      #tau[lag + 1] <- sum((x[1:(n - lag)]-mean(x))  * (x[(lag + 1):n] - mean(x) ))/(n-lag)
+      
+      #autocov sur les data non centrées comme dans Marin et al.(2010)
+      tau[lag + 1] <- sum(x[1:(n - lag)]  * x[(lag + 1):n])/(n-lag)
+    }
+  }
+  return(tau)
+}
+```
+
+Autocorr est utilisée dans Pudlo et al.(2016)
+```{r}
+autocorr <- function(x, q=2){
+  
+  return(autocov(x,q)/var(x))
+}
+```
+
+
+
+ABC algorithm
+```{r}
+ABC <- function(N, tol, eta = autocorr, dist = distance) {
+  #N est le nombre des estimations générées
+  #tol est la dégré de tolérance
+  #eta est la statistique définie sur l'ensemble des data simulées
+  #dist : la métrique
+  
+  theta_values <- matrix(nrow = N, ncol = 3)  # Stocker les valeurs de theta dans une matrice
+  i = 1
+  for (i in 1:N) {
+    #générer des θ'
+    thetas_sim <- grid()
+    #simulation des points c'est à dire la vraisemblance f(.|θ')
+    z_sim <- moving_average_2(thetas_sim[1], thetas_sim[2])
+    #calcul de la distance entre les statistiques des vraies données et celles simulées
+    d <- dist(eta(y_obs), eta(z_sim))
+    theta_values[i, ] <- c(thetas_sim[1],thetas_sim[2],d)
+    i <- i+1
+  }
+  
+  #on va utiliser comme critère de comparaison pour fixer la tol comme quantile
+  sorted_thetas<-theta_values[order(theta_values[,3],decreasing=FALSE),]
+  
+  return(sorted_thetas[1:N*tol,1:2])
+}
+```
+
+
+Execution de l'algorithme ABC 
+```{r}
+N = 10**6
+tol = 0.001
+sampled_thetas <- ABC(N, tol,eta = autocov, dist = distance)
+```
+
+La moyenne des estimations de θ
+Remarque: La moyenne est assez proche des vrais θ avec les bonnes calibrations
+
+```{r}
+theta_moy = c(mean(sampled_thetas_df[,1]),mean(sampled_thetas_df[,2]))
+```
+
+Graphe
+```{r}
+#Convertir la matrice des thetas à un data.frame
+sampled_thetas_df <- as.data.frame(sampled_thetas)
+colnames(sampled_thetas_df) <- c("x", "y")
+
+ggplot() +
+  geom_polygon(data = data.frame(u = c(-2, 0, 2), v = c(1, -1, 1)), aes(x = u, y = v), fill = "bisque1", color = "bisque1") +
+  labs(x = "θ1", y = "θ2") +
+  geom_point(data = sampled_thetas_df, aes(x = x, y = y), color = "deepskyblue3", shape = 20) +
+  geom_point(data = data.frame(x = θ1_true, y = θ2_true), aes(x = x, y = y), color = "red", shape = 19) +
+  theme_minimal()+
+  labs(title = paste0("Autocorr comme statistique descriptive et lag = c(0,1), la distance euclidienne, tol =  0.01 et N = ", N))
+
+```
+
+
+
+
+Preuve de l'impact de la tolérance
+```{r}
+#Simu of ABC for different tol
+N = 10**6
+tol = c(0.1,0.001,0.001)
+sampled_thetas1 <- ABC(N, tol[1],eta = autocov, dist = distance)
+sampled_thetas2 <- ABC(N, tol[2],eta = autocov, dist = distance)
+sampled_thetas3 <- ABC(N, tol[3],eta = autocov, dist = distance)
+
+```
+
+```{r}
+# Extract the columns of sorted_thetas for each tol
+theta11_values <- sampled_thetas1[, 1]
+theta21_values <- sampled_thetas2[, 1]
+theta31_values <- sampled_thetas3[, 1]
+
+theta12_values <- sampled_thetas1[, 2]
+theta22_values <- sampled_thetas2[, 2]
+theta32_values <- sampled_thetas3[, 2]
+
+
+library(gridExtra)
+# Create plots for each column
+graphique1 <- ggplot() +
+  geom_density(color = "black") +
+  geom_density(data = data.frame(theta = theta11_values), aes(x = theta),color = "blue")+
+  geom_density(data = data.frame(theta = theta21_values), aes(x = theta),color = "red") +
+  geom_density(data = data.frame(theta = theta31_values), aes(x = theta),color = "green") +
+  labs(x = "θ1", y = "Density") +
+  theme_minimal()+
+  xlim(-2, 2)
+
+graphique2 <- ggplot(data = data.frame(theta = theta12_values), aes(x = theta)) +
+  geom_density(color = "black") +
+  geom_density(data = data.frame(theta = theta12_values), aes(x = theta),color = "blue") +
+  geom_density(data = data.frame(theta = theta22_values), aes(x = theta),color = "red") +
+  geom_density(data = data.frame(theta = theta32_values), aes(x = theta),color = "green") +
+  labs(x = "θ2", y = "Densité") +
+  theme_minimal()+
+  xlim(-1, 1)
+
+
+grid.arrange(graphique1, graphique2, nrow = 1)
+
+```

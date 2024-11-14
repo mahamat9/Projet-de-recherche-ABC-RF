@@ -1,0 +1,172 @@
+---
+title: "Exemple d'ABC por la Selection du model"
+output: pdf_document
+date: "`r Sys.Date()`"
+---
+
+```{r}
+library(ggplot2)
+library(MASS)
+library(gridExtra)
+```
+
+la loi a priori des paramètres:
+
+Pour MA(1): simulation du pair (θ1,θ2) sur le triangle défini par −2 < θ1 < 2, θ1 + θ2 >  -1, θ1 − θ2 < 1
+Pour MA(2): simulation du θ1 sur le segment  -1 < θ1 < 1
+```{r}
+theta_M1 <- function() {
+  runif(1, min = -1, max = 1)
+}
+
+theta_M2 <- function() {
+  while (TRUE) {
+    # Générer points aléatoires suivant loi uniform
+    theta1 <- runif(1, min = -2, max = 2)
+    theta2 <- runif(1, min = -1, max = 1)
+    
+    # vérifier les conditions
+    if (theta1 + theta2 > - 1 && theta1 - theta2 < 1) {
+      return(c(theta1, theta2))
+    }
+  }
+}
+```
+
+
+Générer MA(1) et MA(2) pour T=100 (ou n=100)
+```{r}
+# Function to generate an MA(1) time series
+moving_average_1 <- function(theta1, n = 100) {
+  epsilon <- rnorm(n + 1) 
+  y <- epsilon[1:n] - theta1 * epsilon[2:(n + 1)]
+  return(y)
+}
+
+# Function to generate an MA(2) time series
+moving_average_2 <- function(theta1, theta2, n = 100) {
+  epsilon <- rnorm(n + 2)  
+  y <- epsilon[3:(n + 2)] - theta1 * epsilon[2:(n + 1)] - theta2 * epsilon[1:n]
+  return(y)
+}
+```
+
+
+
+Data Simulée MA(1) et MA(2) et les deux autocorrelations: 
+```{r}
+N_ref=10^4
+
+# Create an empty data frame to store results
+Data <- data.frame(model = character(), theta1 = numeric(), theta2 = numeric(), 
+                              ACF1 = numeric(), ACF2 = numeric(), stringsAsFactors = FALSE)
+
+# Simulate and store results
+set.seed(123)  
+for (i in 1:N_ref) {
+  # Parameters for MA(1)
+  theta1 <- theta_M1()
+  series_MA1 <- moving_average_1(theta1)
+  acf_values_MA1 <- acf(series_MA1, lag.max = 7, plot = FALSE, type="covariance")$acf[1:2]
+
+  # Parameters for MA(2)
+  theta_pair <- theta_M2()
+  series_MA2 <- moving_average_2(theta_pair[1], theta_pair[2])
+  acf_values_MA2 <- acf(series_MA2, lag.max = 7, plot = FALSE, type="covariance")$acf[1:2]
+
+  # Append to the reference table
+  Data <- rbind(Data, c("MA(1)", theta1, NA, acf_values_MA1))
+  Data <- rbind(Data, c("MA(2)", theta_pair[1], theta_pair[2], acf_values_MA2))
+}
+
+Data[, -1] <- lapply(Data[, -1], as.numeric)
+Data[ , 1] <- as.factor(Data[ ,1])
+# Set proper column names for clarity
+colnames(Data) <- c("Model", "Theta1", "Theta2", "ACF1", "ACF2")
+
+# View the first few rows of the reference table
+head(Data)
+
+```
+
+
+
+Data observées pour les vraies thetas:
+```{r}
+θ1_true <- 0.6
+θ2_true <- 0.2
+y_obs <- moving_average_2(θ1_true, θ2_true)
+acf_values_obs <- acf(y_obs, lag.max = 7, plot = FALSE, type="covariance")$acf[1:2]
+acf_values_obs
+```
+
+
+Nous definissons la distance qui sera utilisé par la suite pour calculer celle entre les statistiques descriptives 
+```{r} 
+#Euclidien
+distance <- function(y, z){
+  return(sqrt(sum((y - z)^2)))}
+```
+
+
+ABC algorithm
+```{r}
+ABC <- function(N, tol) {
+  #N est le nombre des estimations générées
+  #tol est la dégré de tolérance
+  
+  Model_selected <- data.frame(matrix(ncol = ncol(Data) + 1, nrow = 0))
+  colnames(Model_selected) <- c(colnames(Data), "Distance")  # Stocker les modeles selctionnées
+  
+  for (i in 1:N) {
+    #on prend une modèle du tableau de Référence
+    model <- Data[i,]
+    #on compare la distance entre les statistiques descriptives de ce modèle et les statistiques descriptives des data observés
+    d <- distance(acf_values_obs, model[, 4:5])
+    model_avec_distance <- c(as.vector(model), Distance = d)  # Ensure consistent column names
+    Model_selected <- rbind(Model_selected, model_avec_distance)
+  }
+  
+  #on va utiliser comme critère de comparaison pour fixer la tol comme quantile
+  sorted_model_selected <- Model_selected[order(Model_selected$Distance),]
+  return(sorted_model_selected[1:(N*tol),])
+}
+
+```
+
+
+Execution de l'algorithme ABC 
+```{r}
+N = 2*N_ref
+tol = 0.001
+model_selected <- ABC(N, tol)
+```
+
+```{r}
+# Count the occurrences of "MA(2)" in the "Model" column
+ma2_count = sum(model_selected$Model == 'MA(2)')
+
+# Calculate the total number of rows in the "Model" column
+total_rows = nrow(model_selected)
+
+# Calculate the ratio
+ma2_count / total_rows
+```
+
+```{r}
+
+# Set the true model
+true_model <- "MA(2)"  # Change this to the true model you're using
+model_selected_numeric <- as.numeric(factor(model_selected[, "Model"], levels = c("MA(1)", "MA(2)"))) # Convert factor to numeric for plotting
+# Plot the distance of each selected model from the true model
+plot(model_selected$Distance, 
+     model_selected_numeric,  
+     xlab = "Distance du vrai modèle",
+     ylab = "Modèle selectionné",
+     main = "Distance entre le modèle selectionné et le vrai modèle",
+     pch = 16,
+     col = ifelse(model_selected$Model == true_model, "blue", "orange"),
+     yaxt = "n")
+axis(2, at = c(1, 2), labels = c("MA(1)", "MA(2)"))# Color points based on whether they match the true model 
+```
+

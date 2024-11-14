@@ -1,0 +1,197 @@
+---
+title: "MA(1) vs MA(2): toy example"
+output: html_notebook
+---
+
+la loi a priori des paramètres:
+
+Pour MA(1): simulation du pair (θ1,θ2) sur le triangle défini par −2 \< θ1 \< 2, θ1 + θ2 \> - 1, θ1 − θ2 \< 1 Pour MA(2): simulation du θ1 sur le segment -1 \< θ1 \< 1
+
+```{r}
+theta_M1 <- function() {
+  runif(1, min = -1, max = 1)
+}
+
+theta_M2 <- function() {
+  while (TRUE) {
+    # Générer points aléatoires suivant loi uniform
+    theta1 <- runif(1, min = -2, max = 2)
+    theta2 <- runif(1, min = -1, max = 1)
+    
+    # vérifier les conditions
+    if (theta1 + theta2 > - 1 && theta1 - theta2 < 1) {
+      return(c(theta1, theta2))
+    }
+  }
+}
+```
+
+Générer MA(1) et MA(2) pour T=100 (ou n=100)
+
+```{r}
+# Function to generate an MA(1) time series
+moving_average_1 <- function(theta1, n = 100) {
+  epsilon <- rnorm(n + 1) 
+  y <- epsilon[1:n] - theta1 * epsilon[2:(n + 1)]
+  return(y)
+}
+
+# Function to generate an MA(2) time series
+moving_average_2 <- function(theta1, theta2, n = 100) {
+  epsilon <- rnorm(n + 2)  
+  y <- epsilon[3:(n + 2)] - theta1 * epsilon[2:(n + 1)] - theta2 * epsilon[1:n]
+  return(y)
+}
+```
+
+Tableau de référence MA(1) et MA(2) et les sept premiers autocorrelations:
+
+```{r}
+#algorithme 2
+N_ref <- 1000  # Define the number of simulations pour chaque MA
+
+# Create an empty data frame to store results
+Data <- data.frame(model = character(), theta1 = numeric(), theta2 = numeric(), 
+                              ACF1 = numeric(), ACF2 = numeric(), ACF3 = numeric(),
+                              ACF4 = numeric(), ACF5 = numeric(), ACF6 = numeric(),
+                              ACF7 = numeric(), stringsAsFactors = FALSE)
+
+# Simulate and store results
+set.seed(123)  
+for (i in 1:N_ref) {
+  # Parameters for MA(1)
+  theta1 <- theta_M1()
+  series_MA1 <- moving_average_1(theta1)
+  acf_values_MA1 <- acf(series_MA1, lag.max = 7, plot = FALSE)$acf[2:8]
+
+  # Parameters for MA(2)
+  theta_pair <- theta_M2()
+  series_MA2 <- moving_average_2(theta_pair[1], theta_pair[2])
+  acf_values_MA2 <- acf(series_MA2, lag.max = 7, plot = FALSE)$acf[2:8]
+
+  # Append to the reference table
+  Data <- rbind(Data, c("MA(1)", theta1, NA, acf_values_MA1))
+  Data <- rbind(Data, c("MA(2)", theta_pair[1], theta_pair[2], acf_values_MA2))
+}
+
+# Set proper column names for clarity
+colnames(Data) <- c("Model", "Theta1", "Theta2", "ACF1", "ACF2", "ACF3", "ACF4", "ACF5", "ACF6", "ACF7")
+
+# View the first few rows of the reference table
+head(Data)
+```
+
+Estimation des taux d'erreur de qq méthodes de classifications de MA(1) et MA(2):
+
+Préparation des données:
+
+```{r}
+str(Data) #inspecter les types des variables
+Data$Model <- as.factor(Data$Model)
+Data[,4:10] <- sapply(Data[,4:10], as.numeric) #à enlever ca
+
+Tableau_de_reference <- subset(Data, select = -c(Theta1, Theta2))
+```
+
+appliquer la méthode "abcrf" du package abcrf pour constructs a random forest from a reference table towards performing an ABC model choice
+
+échantillonnage:
+
+```{r}
+set.seed(123) # for reproducibility
+
+# Define the proportion of data to use for training 
+train_prop <- 0.5 #essayer 75% #à essayer avec 30 000
+
+# Randomly sample row indices for the training set
+train_indices <- sample(1:nrow(Tableau_de_reference), train_prop * nrow(Tableau_de_reference))
+
+# Create the training and testing sets
+train_data <- Tableau_de_reference[train_indices, ]
+test_data <- Tableau_de_reference[-train_indices, ]
+```
+
+```{r}
+#algo 2
+library(abcrf)
+model_1 <- abcrf(Model ~ ., data= train_data, ntree=1000, lda= FALSE ) #ntree=500 par défaut
+model_1
+```
+
+```{r}
+# can the error rate be improved by increasing the number of trees?
+err.abcrf(model_1, training = train_data)
+```
+
+```{r}
+#algorithme 3 partie 2-3
+```
+
+```{r}
+predict_1 <- predict(model_1, obs = test_data, training = train_data, ntree=1000)
+```
+
+```{r}
+predict_1
+
+sum(predict_1$post.prob==0.5) # pour voir ce qui ne sont pas classé #il faut ajouter au plus 0.5 #meme ca s'affice ds la graphe
+```
+
+Graphe de l'évolution des proba à posteriori pour les models
+
+```{r}
+couleurs <- c("blue", "orange")[predict_1$allocation]
+
+plot(predict_1$post.prob, col = couleurs, pch = 16, xlab = "Index", ylab = "posterior prob.", main = "Posterior des models")
+abline(h=0.5)
+
+
+```
+
+```{r}
+variableImpPlot(model_1) # verifier les variables les + importantes #à comprendre les abcisses
+```
+
+```{r}
+#On change le nb d'arbres apres verification avec err.abcrf: #modèle optimale 
+
+model_2 <- abcrf(Model ~ ., data= train_data, ntree=343, lda= FALSE)
+model_2
+```
+
+```{r}
+# can the error rate be improved by increasing the number of trees?
+err.abcrf(model_2, training = train_data)
+```
+
+```{r}
+predict_2 <- predict(model_2, obs = test_data, training = train_data, ntree=343)
+
+```
+
+Graphe de l'évolution des proba à posteriori pour les models dans model2
+
+```{r}
+couleurs <- c("blue", "orange")[predict_2$allocation]
+
+plot(predict_2$post.prob, col = couleurs, pch = 16, xlab = "Index", ylab = "posterior prob.", main = "Posterior des models")
+abline(h=0.5)
+
+
+```
+
+Prediction de MA(2) pour thetha2 proche à 0 #test sont juste des MA(2) avec θ2 proche de zero c à d très semblable à MA(1)
+
+```{r}
+#avec thetha proche de 0, on a des bonnes estimations. preuve de l'efficacité du abcrf
+0
+donnees_MA2 <- subset(test_data, Model == "MA(2)")
+
+
+# Supposons que vous avez un modèle ABCRF nommé modele_abcrf
+# Remplacez 'modele_abcrf' par le nom de votre modèle ABCRF
+# Assurez-vous que les colonnes utilisées dans le modèle ABCRF correspondent aux colonnes de vos données de test
+predictions_MA2 <- predict(model_2,obs= donnees_MA2, training = train_data)
+
+1-mean(predictions_MA2$allocation==donnees_MA2$Model)
+```

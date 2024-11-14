@@ -1,0 +1,218 @@
+---
+title: "MA(1) vs MA(2): toy example"
+output: 
+  pdf_document:
+    fig_show: "both"
+---
+
+---
+
+la loi a priori des paramètres:
+
+Pour MA(1): simulation du pair (θ1,θ2) sur le triangle défini par −2 < θ1 < 2, θ1 + θ2 > 1, θ1 − θ2 < 1
+Pour MA(2): simulation du θ1 sur le segment  -1 < θ1 < 1
+```{r}
+theta_M1 <- function() {
+  runif(1, min = -1, max = 1)
+}
+
+theta_M2 <- function() {
+  while (TRUE) {
+    # Générer points aléatoires suivant loi uniform
+    theta1 <- runif(1, min = -2, max = 2)
+    theta2 <- runif(1, min = -1, max = 1)
+    
+    # vérifier les conditions
+    if (theta1 + theta2 > 1 && theta1 - theta2 < 1) {
+      return(c(theta1, theta2))
+    }
+  }
+}
+```
+
+
+Générer MA(1) et MA(2) pour n=100
+```{r}
+# Function to generate an MA(1) time series
+moving_average_1 <- function(theta1, n = 100) {
+  epsilon <- rnorm(n + 1) 
+  y <- epsilon[1:n] - theta1 * epsilon[2:(n + 1)]
+  return(y)
+}
+
+# Function to generate an MA(2) time series
+moving_average_2 <- function(theta1, theta2, n = 100) {
+  epsilon <- rnorm(n + 2)  
+  y <- epsilon[3:(n + 2)] - theta1 * epsilon[2:(n + 1)] - theta2 * epsilon[1:n]
+  return(y)
+}
+```
+
+Tableau de référence MA(1) et MA(2) et les sept premiers autocorrelations: 
+```{r}
+N_ref <- 10^4  # Define the number of simulations pour chaque MA
+
+# Create an empty data frame to store results
+reference_table <- data.frame(model = character(), theta1 = numeric(), theta2 = numeric(), 
+                              ACF1 = numeric(), ACF2 = numeric(), ACF3 = numeric(),
+                              ACF4 = numeric(), ACF5 = numeric(), ACF6 = numeric(),
+                              ACF7 = numeric(), stringsAsFactors = FALSE)
+
+# Simulate and store results
+set.seed(123)  
+for (i in 1:N_ref) {
+  # Parameters for MA(1)
+  theta1 <- theta_M1()
+  series_MA1 <- moving_average_1(theta1)
+  acf_values_MA1 <- acf(series_MA1, lag.max = 7, plot = FALSE)$acf[2:8]
+
+  # Parameters for MA(2)
+  theta_pair <- theta_M2()
+  series_MA2 <- moving_average_2(theta_pair[1], theta_pair[2])
+  acf_values_MA2 <- acf(series_MA2, lag.max = 7, plot = FALSE)$acf[2:8]
+
+  # Append to the reference table
+  reference_table <- rbind(reference_table, c("MA(1)", theta1, NA, acf_values_MA1))
+  reference_table <- rbind(reference_table, c("MA(2)", theta_pair[1], theta_pair[2], acf_values_MA2))
+}
+
+# Set proper column names for clarity
+colnames(reference_table) <- c("Model", "Theta1", "Theta2", "ACF1", "ACF2", "ACF3", "ACF4", "ACF5", "ACF6", "ACF7")
+
+# View the first few rows of the reference table
+head(reference_table)
+```
+Estimation des taux d'erreur de qq méthodes de classifications de MA(1) et MA(2):
+
+Préparation des données:
+```{r}
+str(reference_table) #inspecter les types des variables
+reference_table$Model <- as.factor(reference_table$Model)
+reference_table[,4:10] <- sapply(reference_table[,4:10], as.numeric)
+
+Data <- subset(reference_table, select = -c(Theta1, Theta2))
+head(Data)
+```
+
+échantillonnage: 
+```{r}
+set.seed(123) # for reproducibility
+
+# Define the proportion of data to use for training (e.g., 80%)
+train_prop <- 0.8
+
+# Randomly sample row indices for the training set
+train_indices <- sample(1:nrow(Data), train_prop * nrow(Data))
+
+# Create the training and testing sets
+train_data <- Data[train_indices, ]
+test_data <- Data[-train_indices, ]
+```
+
+Random Forest:
+```{r}
+library(randomForest)
+
+set.seed(123)
+# Train Random Forest on all data
+rf_model <- randomForest(Model ~ ., data = train_data, ntree = 500)
+
+#prediction
+predictions <- predict(rf_model, newdata = test_data[, -1])
+
+#Evaluate Performance
+error_rate_rf <- mean(predictions != test_data$Model) * 100  # Misclassification error rate
+
+#error rate
+error_rate_rf
+
+```
+```{r}
+library(class)
+
+# Perform KNN with k = 50
+knn_model <- knn(train = train_data[, -1], test = test_data[, -1], cl = train_data$Model, k = 50)
+
+# Evaluate Performance
+error_rate_knn_50 <- mean(knn_model != test_data$Model) * 100  # Misclassification error rate
+
+# Display the error rate
+error_rate_knn_50
+
+```
+```{r}
+library(class)
+
+# Perform KNN with k = 50
+knn_model <- knn(train = train_data[, -1], test = test_data[, -1], cl = train_data$Model, k = 100)
+
+# Evaluate Performance
+error_rate_knn_100 <- mean(knn_model != test_data$Model) * 100  # Misclassification error rate
+
+# Display the error rate
+error_rate_knn_100
+```
+```{r}
+library(e1071)
+
+# Train Naive Bayes model
+nb_model <- naiveBayes(train_data[, -1], train_data$Model)
+
+# Make predictions
+nb_predictions <- predict(nb_model, test_data[, -1])
+
+# Evaluate performance
+error_rate_nb <- mean(nb_predictions != test_data$Model) * 100  # Misclassification error rate
+
+# Display the error rate
+error_rate_nb
+
+```
+```{r}
+# Train logistic regression model
+logit_model <- glm(Model ~ ., data = train_data, family = binomial)
+
+# Make predictions
+logit_predictions <- predict(logit_model, newdata = test_data[, -1], type = "response")
+
+# Convert predicted probabilities to class labels
+logit_predictions <- ifelse(logit_predictions > 0.5, "MA(2)", "MA(1)")
+
+# Evaluate performance
+error_rate_logit <- mean(logit_predictions != test_data$Model) * 100  # Misclassification error rate
+
+# Display the error rate
+error_rate_logit
+
+```
+```{r}
+library(MASS)
+
+# Train LDA model
+lda_model <- lda(Model ~ ., data = train_data)
+
+# Make predictions
+lda_predictions <- predict(lda_model, newdata = test_data[, -1])
+
+# Extract predicted classes
+lda_classes <- lda_predictions$class
+
+# Evaluate performance
+error_rate_lda <- mean(lda_classes != test_data$Model) * 100  # Misclassification error rate
+
+# Display the error rate
+error_rate_lda
+
+```
+```{r}
+library(knitr)
+
+# Create a data frame with classifiers and error rates
+classifier_error <- data.frame(classifieur = c("Random Forest", "knn (k = 50)", "knn (k = 100)", "Naive Bayes", "Logistic Regression", "LDA"),
+                               erreur = c(error_rate_rf, error_rate_knn_50, error_rate_knn_50, error_rate_nb, error_rate_logit, error_rate_lda))
+
+# Display the table
+kable(classifier_error, caption = "Taux d'erreur de classification: MA(1) vs MA(2) ")
+```
+
+

@@ -1,0 +1,95 @@
+---
+title: "R Notebook"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+1ere part : sur Data du prof
+
+# A separer pour rendre beau
+```{r}
+tablereal = read.csv("C:/Users/mmnb6/OneDrive/Documents/M1-S2/TER_ABC_RF/Tableau+Fig/données réelles/MyTableREALDataSecondSampling", sep = " ")
+tableref <- read.csv("C:/Users/mmnb6/OneDrive/Documents/M1-S2/TER_ABC_RF/Tableau+Fig/données réelles/MyReferenceTable", sep = " ")
+
+head(tableref)
+```
+Données réelles
+```{r}
+tablereal
+```
+
+Nettoyage des tableaux
+```{r}
+#Vérifier s'il y a des valeurs manquantes dans les données
+any(is.na(tableref))
+```
+
+
+
+Nettoyage des lignes avec des valeurs manquantes
+```{r}
+tab_sans_na <- tableref[complete.cases(tableref), ]
+```
+
+Afficher le nombre des lignes par scénario du tableau nettoyé
+```{r}
+View(tab_sans_na)
+table(tab_sans_na$Model)
+```
+
+
+```{r}
+#str(Data) #vérifier les types des variables
+```
+ Categorisation du colonne des modèles
+```{r}
+tab_sans_na$Model <- as.factor(tab_sans_na$Model)
+
+tablereal$Model <- as.factor(tablereal$Model)
+```
+
+
+```{r}
+library(abcrf)
+Tableau_de_reference <- Data
+model <- abcrf(Model ~ ., data= Tableau_de_reference, ntree=500, lda= FALSE )
+model
+```
+
+Evolution de l'erreur OOB en fonction du nombre des arbres
+```{r}
+err.abcrf(model, training = Tableau_de_reference)
+```
+
+
+
+
+Application sur les données réelles
+```{r}
+predict0 = predict(model, obs = tablereal[,-1], training = Tableau_de_reference)
+
+                  ###########RESULT###########################
+#  selected model votes model1 votes model2 votes model3  post.proba
+#             15          328          240          432  0.6193667
+```
+```{r}
+print(predict0)
+```
+
+
+Visualision des statisques résumées importantes dans l'abcrf
+```{r}
+variableImpPlot(model)
+```
+
+
+
+
+```{r}
+variableImpPlot(model, n.var = 10, main = 'Importance des variables')
+```
+
+
+
